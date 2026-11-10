@@ -43,6 +43,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #import <NGExtensions/NSObject+Logs.h>
 #import <NGExtensions/NSString+misc.h>
 
+#import <NGImap4/NGImap4Client.h>
+#import <NGImap4/NGImap4Connection.h>
 #import <NGImap4/NSString+Imap4.h>
 
 #import <SOGo/NSArray+DAV.h>
@@ -50,6 +52,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #import <SOGo/NSDictionary+DAV.h>
 #import <SOGo/SOGoSystemDefaults.h>
 #import <SOGo/SOGoUser.h>
+#import <SOGo/SOGoUserFolder.h>
 #import <SOGo/SOGoCacheGCSObject.h>
 #import <SOGo/SOGoPermissions.h>
 
@@ -63,6 +66,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #import <Contacts/SOGoContactGCSEntry.h>
 
+#import <Mailer/SOGoMailAccount.h>
 #import <Mailer/SOGoMailFolder.h>
 #import <Mailer/SOGoMailNamespace.h>
 
@@ -1867,6 +1871,32 @@ FIXME
 }
 
 //
+// FolderSync also advertises mail folders that can't be opened, so that their
+// subfolders keep their place in the hierarchy: the "Other Users" or "Shared"
+// namespace roots, Dovecot's per-user parents ("Shared/jdoe@example.com") and
+// other \Noselect or \NonExistent parents. Returns NO if the IMAP server can't
+// confirm it, as theFolderName may then be a real folder we failed to open.
+//
+- (BOOL) _isNonSelectableMailFolder: (NSString *) theFolderName
+{
+  SOGoMailAccount *accountFolder;
+  NSArray *flags;
+
+  accountFolder = [[[[context activeUser] homeFolderInContext: context] lookupName: @"Mail"  inContext: context  acquire: NO]
+                     lookupName: @"0"  inContext: context  acquire: NO];
+
+  // Namespace roots aren't real mailboxes, and Cyrus doesn't return them in LIST
+  if ([[accountFolder otherUsersFolderNamespaces] containsObject: theFolderName] ||
+      [[accountFolder sharedFolderNamespaces] containsObject: theFolderName])
+    return YES;
+
+  flags = [[[[[accountFolder imap4Connection] client] list: @"" pattern: theFolderName] objectForKey: @"list"]
+             objectForKey: [NSString stringWithFormat: @"/%@", theFolderName]];
+
+  return ([flags containsObject: @"noselect"] || [flags containsObject: @"nonexistent"]);
+}
+
+//
 //
 //
 - (void) processSyncCollection: (id <DOMElement>) theDocumentElement
@@ -1908,18 +1938,16 @@ FIXME
       //[theBuffer appendFormat: @"<Status>%d</Status>", 8];
       //[theBuffer appendString: @"</Collection>"];
 
-      // FolderSync also advertises mail folders that can't be opened, so that their
-      // subfolders keep their place in the hierarchy: the "Other Users" or "Shared"
-      // namespace roots, Dovecot's per-user parents ("Shared/jdoe@example.com") and
-      // other \Noselect or \NonExistent parents, which -imapFolderGUIDs names after
-      // themselves. Answer their Sync as for an empty folder. Without a SyncKey in
-      // the reply, clients like iOS repeat their initial Sync forever (bug #5872).
+      // Mail folders that FolderSync advertises but that can't be opened (see
+      // -_isNonSelectableMailFolder:) are answered as empty folders. Without a SyncKey
+      // in the reply, clients like iOS repeat their initial Sync forever (bug #5872).
       nameInCache = nil;
       if (realCollectionId)
         nameInCache = [NSString stringWithFormat: @"folder%@", realCollectionId];
 
       if (folderType == ActiveSyncMailFolder && nameInCache &&
-          [[imapFolderGUIDS objectForKey: nameInCache] isEqualToString: nameInCache])
+          [[imapFolderGUIDS objectForKey: nameInCache] isEqualToString: nameInCache] &&
+          [self _isNonSelectableMailFolder: realCollectionId])
         {
           if (debugOn)
             [self logWithFormat: @"EAS - processSyncCollection: %@ can't be opened, answering as an empty folder", realCollectionId];
