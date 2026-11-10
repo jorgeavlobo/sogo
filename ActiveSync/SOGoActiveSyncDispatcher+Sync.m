@@ -1897,6 +1897,7 @@ FIXME
   if (collection == nil)
     {
       NSString *nameInCache;
+      BOOL knownKey;
 
       // Collection not found - next folderSync will do the cleanup
       //NSLog(@"Sync Collection not found %@ %@", collectionId, realCollectionId);
@@ -1923,15 +1924,20 @@ FIXME
           if (debugOn)
             [self logWithFormat: @"EAS - processSyncCollection: %@ can't be opened, answering as an empty folder", realCollectionId];
 
+          // We only ever hand out SyncKey -1 for these folders. Any other key dates from
+          // when the folder could be opened: ask for a complete resync (Status 3) so that
+          // the client drops the messages and pending changes it still holds for it.
+          knownKey = ([syncKey isEqualToString: @"0"] || [syncKey isEqualToString: @"-1"]);
+
           [theBuffer appendString: @"<Collection>"];
           [theBuffer appendString: @"<Class>Email</Class>"];
-          [theBuffer appendFormat: @"<SyncKey>%@</SyncKey>", ([syncKey isEqualToString: @"0"] ? @"-1" : syncKey)];
+          [theBuffer appendFormat: @"<SyncKey>%@</SyncKey>", (knownKey ? @"-1" : @"0")];
           [theBuffer appendFormat: @"<CollectionId>%@</CollectionId>", collectionId];
-          [theBuffer appendFormat: @"<Status>%d</Status>", 1];
+          [theBuffer appendFormat: @"<Status>%d</Status>", (knownKey ? 1 : 3)];
           [theBuffer appendString: @"</Collection>"];
 
-          // Like for any folder, only the first SyncKey is a change to push.
-          if ([syncKey isEqualToString: @"0"])
+          // Like for any folder, only the first SyncKey or a resync is a change to push.
+          if (![syncKey isEqualToString: @"-1"])
             *changeDetected = YES;
         }
 
