@@ -1896,6 +1896,8 @@ FIXME
 
   if (collection == nil)
     {
+      NSString *nameInCache;
+
       // Collection not found - next folderSync will do the cleanup
       //NSLog(@"Sync Collection not found %@ %@", collectionId, realCollectionId);
       //Outlook doesn't like following response
@@ -1904,6 +1906,35 @@ FIXME
       //[theBuffer appendFormat: @"<CollectionId>%@</CollectionId>", collectionId];
       //[theBuffer appendFormat: @"<Status>%d</Status>", 8];
       //[theBuffer appendString: @"</Collection>"];
+
+      // FolderSync also advertises mail folders that can't be opened, so that their
+      // subfolders keep their place in the hierarchy: the "Other Users" or "Shared"
+      // namespace roots, Dovecot's per-user parents ("Shared/jdoe@example.com") and
+      // other \Noselect or \NonExistent parents, which -imapFolderGUIDs names after
+      // themselves. Answer their Sync as for an empty folder. Without a SyncKey in
+      // the reply, clients like iOS repeat their initial Sync forever (bug #5872).
+      nameInCache = nil;
+      if (realCollectionId)
+        nameInCache = [NSString stringWithFormat: @"folder%@", realCollectionId];
+
+      if (folderType == ActiveSyncMailFolder && nameInCache &&
+          [[imapFolderGUIDS objectForKey: nameInCache] isEqualToString: nameInCache])
+        {
+          if (debugOn)
+            [self logWithFormat: @"EAS - processSyncCollection: %@ can't be opened, answering as an empty folder", realCollectionId];
+
+          [theBuffer appendString: @"<Collection>"];
+          [theBuffer appendString: @"<Class>Email</Class>"];
+          [theBuffer appendFormat: @"<SyncKey>%@</SyncKey>", ([syncKey isEqualToString: @"0"] ? @"-1" : syncKey)];
+          [theBuffer appendFormat: @"<CollectionId>%@</CollectionId>", collectionId];
+          [theBuffer appendFormat: @"<Status>%d</Status>", 1];
+          [theBuffer appendString: @"</Collection>"];
+
+          // Like for any folder, only the first SyncKey is a change to push.
+          if ([syncKey isEqualToString: @"0"])
+            *changeDetected = YES;
+        }
+
       return;
     }
 
